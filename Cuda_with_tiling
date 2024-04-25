@@ -1,0 +1,108 @@
+#include <stdio.h>
+#include <cuda_runtime.h>
+#include <chrono>
+
+#define TILE_WIDTH 16  // Define the width of the tile
+
+__global__ void matrixMulTiled(const float *A, const float *B, float *C, int m, int n, int p) {
+    int bx = blockIdx.x, by = blockIdx.y;
+    int tx = threadIdx.x, ty = threadIdx.y;
+    int row = by * TILE_WIDTH + ty;
+    int col = bx * TILE_WIDTH + tx;
+    float sum = 0.0f;
+
+    // Use shared memory to store tiles of A and B
+    __shared__ float As[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float Bs[TILE_WIDTH][TILE_WIDTH];
+
+    // Loop over the tiles of the input matrices
+    for (int k = 0; k < (n + TILE_WIDTH - 1) / TILE_WIDTH; k++) {
+        // Load tiles into shared memory
+        if (k * TILE_WIDTH + tx < n && row < m)
+            As[ty][tx] = A[row * n + k * TILE_WIDTH + tx];
+        else
+            As[ty][tx] = 0.0;
+
+        if (k * TILE_WIDTH + ty < n && col < p)
+            Bs[ty][tx] = B[(k * TILE_WIDTH + ty) * p + col];
+        else
+            Bs[ty][tx] = 0.0;
+
+        __syncthreads();  // Synchronize to ensure all data is loaded
+
+        // Multiply the elements of the tiles
+        for (int i = 0; i < TILE_WIDTH; i++) {
+            sum += As[ty][i] * Bs[i][tx];
+        }
+
+        __syncthreads();  // Synchronize before loading next tile
+    }
+
+    // Write the result to the output matrix C
+    if (row < m && col < p)
+        C[row * p + col] = sum;
+}
+
+int main() {
+    int sizes[] = {4, 16, 64, 128, 256, 1024};  // Different matrix sizes for testing
+
+    for (int i = 0; i < 6; i++) {
+        int m = sizes[i], n = sizes[i], p = sizes[i];
+
+        size_t sizeA = m * n * sizeof(float);
+        size_t sizeB = n * p * sizeof(float);
+        size_t sizeC = m * p * sizeof(float);
+
+        float *A, *B, *C, *d_A, *d_B, *d_C;
+
+        // Allocate host memory
+        A = (float*)malloc(sizeA);
+        B = (float*)malloc(sizeB);
+        C = (float*)malloc(sizeC);
+
+        // Initialize matrices A and B with some values
+        for (int k = 0; k < m * n; k++) {
+            A[k] = 1.0f;  // Simplified initialization for illustration
+        }
+        for (int k = 0; k < n * p; k++) {
+            B[k] = 2.0f;  // Simplified initialization for illustration
+        }
+
+        // Allocate device memory
+        cudaMalloc((void**)&d_A, sizeA);
+        cudaMalloc((void**)&d_B, sizeB);
+        cudaMalloc((void**)&d_C, sizeC);
+
+        // Copy host memory to device
+        cudaMemcpy(d_A, A, sizeA, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B, B, sizeB, cudaMemcpyHostToDevice);
+
+        // Define block size and grid size
+        dim3 threadsPerBlock(TILE_WIDTH, TILE_WIDTH);
+        dim3 blocksPerGrid((p + threadsPerBlock.x - 1) / threadsPerBlock.x, (m + threadsPerBlock.y - 1) / threadsPerBlock.y);
+
+        // Launch CUDA kernel
+        auto start = std::chrono::high_resolution_clock::now();
+        matrixMulTiled<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, m, n, p);
+        cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
+
+        // Copy results back to host
+        cudaMemcpy(C, d_C, sizeC, cudaMemcpyDeviceToHost);
+
+        std::chrono::duration<float, std::milli> duration = end - start;
+        printf("Matrix size: %dx%d, Block size: %dx%d, Time taken: %f milliseconds\n", m, n, TILE_WIDTH, TILE_WIDTH, duration.count());
+
+        // Free device memory
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+
+        // Free host memory
+        free(A);
+        free(B);
+        free(C);
+    }
+
+    return 0;
+}
