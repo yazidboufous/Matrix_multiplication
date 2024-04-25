@@ -1,0 +1,50 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <openacc.h>
+#include <time.h>
+
+void matrixMulACC(float *A, float *B, float *C, int m, int n, int p) {
+    #pragma acc data copyin(A[0:m*n], B[0:n*p]) copyout(C[0:m*p])
+    {
+        #pragma acc parallel loop collapse(2)
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < p; j++) {
+                float sum = 0.0f;
+                #pragma acc loop reduction(+:sum)
+                for (int k = 0; k < n; k++) {
+                    sum += A[i * n + k] * B[k * p + j];
+                }
+                C[i * p + j] = sum;
+            }
+        }
+    }
+}
+
+int main() {
+    const int m = 512, n = 512, p = 512;
+    float *A, *B, *C;
+
+    A = (float*)malloc(m * n * sizeof(float));
+    B = (float*)malloc(n * p * sizeof(float));
+    C = (float*)malloc(m * p * sizeof(float));
+
+    // Initialize matrices
+    for (int i = 0; i < m * n; i++) {
+        A[i] = 1.0f;
+    }
+    for (int i = 0; i < n * p; i++) {
+        B[i] = 2.0f;
+    }
+
+    // Measure performance
+    clock_t start = clock();
+    matrixMulACC(A, B, C, m, n, p);
+    clock_t end = clock();
+
+    printf("Time taken: %lf seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
+
+    free(A);
+    free(B);
+    free(C);
+    return 0;
+}
