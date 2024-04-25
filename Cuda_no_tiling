@@ -1,0 +1,87 @@
+%%cuda
+
+#include <stdio.h>
+#include <cuda_runtime.h>
+#include <chrono>
+
+__global__ void matrixMul(const float* A, const float* B, float* C, int m, int n, int p) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < m && col < p) {
+        float sum = 0.0f;
+        for (int k = 0; k < n; k++) {
+            sum += A[row * n + k] * B[k * p + col];
+        }
+        C[row * p + col] = sum;
+    }
+}
+
+int main() {
+    int sizes[] = {4, 16, 64, 128, 256, 1024}; // Different matrix sizes for testing
+    int blockSizes[] = {4 , 8, 16, 32}; // Different block sizes for testing
+
+    for (int i = 0; i < 6; i++) {
+        for (int j = 0; j < 4; j++) {
+            int m = sizes[i], n = sizes[i], p = sizes[i];
+            int blockSize = blockSizes[j];
+
+            size_t sizeA = m * n * sizeof(float);
+            size_t sizeB = n * p * sizeof(float);
+            size_t sizeC = m * p * sizeof(float);
+
+            float *A, *B, *C, *d_A, *d_B, *d_C;
+
+            // Allocate host memory
+            A = (float*)malloc(sizeA);
+            B = (float*)malloc(sizeB);
+            C = (float*)malloc(sizeC);
+
+            // Initialize matrices A and B with some values
+            for (int k = 0; k < m * n; k++) {
+                A[k] = 1.0f; // Simplified initialization for illustration
+            }
+            for (int k = 0; k < n * p; k++) {
+                B[k] = 2.0f; // Simplified initialization for illustration
+            }
+
+            // Allocate device memory
+            cudaMalloc((void**)&d_A, sizeA);
+            cudaMalloc((void**)&d_B, sizeB);
+            cudaMalloc((void**)&d_C, sizeC);
+
+            // Copy host memory to device
+            cudaMemcpy(d_A, A, sizeA, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_B, B, sizeB, cudaMemcpyHostToDevice);
+
+            // Define block size and grid size
+            dim3 threadsPerBlock(blockSize, blockSize);
+            dim3 blocksPerGrid((p + threadsPerBlock.x - 1) / threadsPerBlock.x, (m + threadsPerBlock.y - 1) / threadsPerBlock.y);
+
+            // Launch CUDA kernel
+            auto start = std::chrono::high_resolution_clock::now();
+            matrixMul<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, m, n, p);
+            cudaDeviceSynchronize();
+            auto end = std::chrono::high_resolution_clock::now();
+
+            // Copy results back to host
+            cudaMemcpy(C, d_C, sizeC, cudaMemcpyDeviceToHost);
+
+            std::chrono::duration<float, std::milli> duration = end - start;
+            printf("Matrix size: %dx%d, Block size: %dx%d, Time taken: %f milliseconds\n", m, n, blockSize, blockSize, duration.count());
+
+            // Free device memory
+            cudaFree(d_A);
+            cudaFree(d_B);
+            cudaFree(d_C);
+
+            // Free host memory
+            free(A);
+            free(B);
+            free(C);
+        }
+    }
+
+    return 0;
+}
+
