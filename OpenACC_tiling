@@ -1,0 +1,58 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <openacc.h>
+#include <time.h>
+
+#define TILE_SIZE 16
+
+void matrixMulACCTiled(float *A, float *B, float *C, int m, int n, int p) {
+    #pragma acc data copyin(A[0:m*n], B[0:n*p]) copyout(C[0:m*p])
+    {
+        #pragma acc parallel loop
+        for (int ii = 0; ii < m; ii += TILE_SIZE) {
+            for (int jj = 0; jj < p; jj += TILE_SIZE) {
+                for (int kk = 0; kk < n; kk += TILE_SIZE) {
+                    #pragma acc loop tile(TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                    for (int i = ii; i < ii + TILE_SIZE; i++) {
+                        for (int j = jj; j < jj + TILE_SIZE; j++) {
+                            float sum = C[i * p + j];
+                            for (int k = kk; k < kk + TILE_SIZE; k++) {
+                                sum += A[i * n + k] * B[k * p + j];
+                            }
+                            C[i * p + j] = sum;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+int main() {
+    const int m = 512, n = 512, p = 512;
+    float *A, *B, *C;
+
+    A = (float*)malloc(m * n * sizeof(float));
+    B = (float*)malloc(n * p * sizeof(float));
+    C = (float*)malloc(m * p * sizeof(float));
+
+    // Initialize matrices
+    for (int i = 0; i < m * n; i++) {
+        A[i] = 1.0f;
+    }
+    for (int i = 0; i < n * p; i++) {
+        B[i] = 2.0f;
+    }
+
+    // Measure performance
+    clock_t start = clock();
+    matrixMulACCTiled(A, B, C, m, n, p);
+    clock_t end = clock();
+
+    printf("Time taken: %lf seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
+
+    free(A);
+    free(B);
+    free(C);
+    return 0;
+}
